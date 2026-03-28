@@ -25,8 +25,8 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
     st.error("ANTHROPIC_API_KEY is not set. Please add it to your .env file.")
     st.stop()
 
-if not os.environ.get("ELEVENLABS_API_KEY"):
-    st.warning("ELEVENLABS_API_KEY is not set. The app will run in text-only mode (no audio).")
+if not os.environ.get("OPENAI_API_KEY"):
+    st.warning("OPENAI_API_KEY is not set. The app will run in text-only mode (no audio).")
 
 # --- Init singletons ---
 db = Database()
@@ -231,40 +231,6 @@ with st.sidebar:
 
 # --- Main area ---
 st.title("⚔️ Pathfinder Quest")
-
-# --- Voice picker (first-run experience) ---
-if voice.needs_voice_selection:
-    st.subheader("Choose your narrator voice")
-    st.write("Pick a voice for your story narrator. You can change this any time by editing the .env file.")
-
-    voices = voice.list_voices()
-    voice_options = {f"{v['name']} ({v['category']})": v["voice_id"] for v in voices}
-    selected_voice_label = st.selectbox(
-        "Narrator voice",
-        list(voice_options.keys()),
-        key="voice_picker_select",
-    )
-    selected_voice_id = voice_options[selected_voice_label]
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("Preview voice", key="btn_preview_voice"):
-            with st.spinner("Generating preview..."):
-                preview_path = voice.speak_to_file(
-                    "Welcome, brave adventurer. Your quest begins now...",
-                    voice_id=selected_voice_id,
-                )
-            if preview_path:
-                with open(preview_path, "rb") as f:
-                    st.audio(f.read(), format="audio/mp3", autoplay=True)
-            else:
-                st.error("Preview failed. Check your ElevenLabs API key.")
-    with col2:
-        if st.button("Use this voice", key="btn_confirm_voice"):
-            voice.set_voice(selected_voice_id)
-            st.rerun()
-
-    st.stop()
 
 if not st.session_state.story_started:
     st.markdown(
