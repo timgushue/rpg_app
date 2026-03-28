@@ -1,0 +1,25 @@
+# API keys — never commit these
+.env
+
+# Game data — local to each machine
+stories.db
+audio/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
