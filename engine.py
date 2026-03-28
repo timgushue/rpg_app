@@ -19,11 +19,9 @@ from prompts import (
     CLASS_FOCUS_POINTS,
     CLASS_HP_PER_LEVEL,
     XP_PER_LEVEL,
-    ANCESTRY_ABILITY_BOOSTS,
-    CLASS_KEY_ABILITY,
-    CLASS_SECONDARY_ABILITIES,
     build_context,
 )
+from character import build_ability_scores
 
 MODEL = "claude-sonnet-4-5"
 
@@ -32,29 +30,6 @@ def _copy_slots(slot_dict: dict) -> dict:
     """Deep-copy spell slot structure."""
     return {lvl: dict(data) for lvl, data in slot_dict.items()}
 
-
-def _build_ability_scores(ancestry: str, hero_class: str) -> dict:
-    """
-    Compute starting ability scores from ancestry boosts/flaws and class key/secondary abilities.
-    Key ability starts at 18; secondaries start at 14; all others at 10.
-    Ancestry adjustments (+2/-2) are applied on top, clamped to [4, 20].
-    """
-    scores = {
-        "strength": 10, "dexterity": 10, "constitution": 10,
-        "intelligence": 10, "wisdom": 10, "charisma": 10,
-    }
-    # Class key ability → 18
-    key = CLASS_KEY_ABILITY.get(hero_class)
-    if key:
-        scores[key] = 18
-    # Secondary abilities → 14
-    for ability in CLASS_SECONDARY_ABILITIES.get(hero_class, []):
-        if scores[ability] < 14:
-            scores[ability] = 14
-    # Ancestry boosts/flaws
-    for ability, delta in ANCESTRY_ABILITY_BOOSTS.get(ancestry, {}).items():
-        scores[ability] = max(4, min(20, scores[ability] + delta))
-    return scores
 
 
 class Engine:
@@ -370,7 +345,7 @@ Reply with a single integer only."""
             for name, qty in CLASS_STARTING_GEAR.get(hero_class, [("adventurer's kit", 1)])
         ]
         starting_max_hp = CLASS_HP_PER_LEVEL.get(hero_class, 8) + 8  # class HP + average ancestry HP
-        ability_scores = _build_ability_scores(ancestry, hero_class)
+        ability_scores = build_ability_scores(ancestry, hero_class)
         hero_sheet = {
             "ancestry": ancestry,
             "class": hero_class,

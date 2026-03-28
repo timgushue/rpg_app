@@ -3,23 +3,7 @@ import json
 import re
 from typing import Optional
 
-from prompts import ANCESTRY_ABILITY_BOOSTS, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
-
-
-def _build_ability_scores(ancestry: str, hero_class: str) -> dict:
-    scores = {
-        "strength": 10, "dexterity": 10, "constitution": 10,
-        "intelligence": 10, "wisdom": 10, "charisma": 10,
-    }
-    key = CLASS_KEY_ABILITY.get(hero_class)
-    if key:
-        scores[key] = 18
-    for ability in CLASS_SECONDARY_ABILITIES.get(hero_class, []):
-        if scores[ability] < 14:
-            scores[ability] = 14
-    for ability, delta in ANCESTRY_ABILITY_BOOSTS.get(ancestry, {}).items():
-        scores[ability] = max(4, min(20, scores[ability] + delta))
-    return scores
+from character import build_ability_scores
 
 
 DB_PATH = "stories.db"
@@ -103,7 +87,7 @@ class Database:
                 # Migrate all-default ability scores to ancestry+class-derived scores
                 scores = hero.get("ability_scores", {})
                 if scores and all(v == 10 for v in scores.values()):
-                    hero["ability_scores"] = _build_ability_scores(
+                    hero["ability_scores"] = build_ability_scores(
                         hero.get("ancestry", "Human"),
                         hero.get("class", "Fighter"),
                     )
