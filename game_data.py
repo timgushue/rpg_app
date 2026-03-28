@@ -51,7 +51,7 @@ CLASS_SECONDARY_ABILITIES: dict[str, list[str]] = {
     "Fighter":            ["constitution", "dexterity"],
     "Wizard":             ["dexterity", "constitution"],
     "Rogue":              ["intelligence", "charisma"],
-    "Cleric":             ["wisdom", "constitution"],
+    "Cleric":             ["charisma", "constitution"],
     "Ranger":             ["constitution", "wisdom"],
     "Barbarian":          ["constitution", "dexterity"],
     "Paladin (Champion)": ["constitution", "wisdom"],
