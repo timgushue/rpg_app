@@ -1,6 +1,6 @@
 # Pathfinder Quest
 
-A storytelling app for young adventurers (ages 8–12) set in the Pathfinder 2nd Edition world of Golarion. Type what your hero does, and your Game Master (powered by Claude) narrates what happens next — then reads it aloud in a narrator voice. Your campaign is saved automatically so every quest continues where you left off.
+A storytelling app for young adventurers (ages 8–12) set in the Pathfinder 2nd Edition world of Golarion. Type what your hero does, and your Game Master (powered by Claude) narrates what happens next — then reads it aloud in a dramatic narrator voice. Your campaign is saved automatically so every quest continues where you left off.
 
 ---
 
@@ -37,6 +37,8 @@ When you start a new adventure, you'll fill out a short character sheet in the s
 | Sorcerer | Casting spells from raw magical power in the blood |
 | Alchemist | Crafting bombs, potions, and experimental elixirs |
 
+Your hero's ability scores (Strength, Dexterity, etc.) are set automatically based on your ancestry and class — no number-crunching required. You can see them in the sidebar under **Ability Scores**.
+
 Click **Begin Adventure!** — the Game Master will describe your opening scene.
 
 ---
@@ -55,11 +57,27 @@ The Game Master narrates everything that happens in the story. You respond by ty
 
 There are no wrong answers. The Game Master will decide what happens based on your hero's class and the situation — just describe what you want to do and see what unfolds.
 
+**Dice rolls:** Every action that matters gets a dice roll shown below the chat. You'll see which skill was used, what you rolled, your modifier, and whether you got a Critical Success, Success, Failure, or Critical Failure. The difficulty of the roll is set by the Game Master based on the situation — picking a rusty padlock is much easier than cracking a vault.
+
 **Tips:**
 - Be specific — "I attack" works, but "I leap onto the table and swing my axe at the hobgoblin's shield arm" is more fun
 - You can try anything — sneaking, persuading, running away, picking up objects, asking NPCs questions
 - Your class matters — a Wizard might identify a magic rune, while a Rogue might notice a tripwire the others missed
 - If the narrator describes something interesting nearby, you can interact with it
+- Resources are tracked automatically — spell slots, arrows, potions, and focus points will deplete as you use them
+
+---
+
+### Your character sheet
+
+The sidebar shows your hero's current status at a glance:
+
+- **HP bar** — your health. Reaches 0 and you're in trouble
+- **XP bar** — earn XP by defeating enemies, completing quests, and clever thinking. Hit 1,000 XP to level up
+- **Gold** — earned by looting and completing quests
+- **Spell slots / Focus points** — shown as filled (◆) and empty (◇) pips. These restore after a full night's rest
+- **Ability Scores** — your six core stats with their modifiers. These affect every roll you make
+- **Inventory** — items you're carrying, with quantities tracked automatically
 
 ---
 
@@ -90,8 +108,8 @@ Your campaign is saved automatically in a file called `stories.db` — don't del
 
 - Python 3.11+
 - [Poetry](https://python-poetry.org/)
-- An [Anthropic API key](https://console.anthropic.com/) (required)
-- An [ElevenLabs API key](https://elevenlabs.io/) (optional — app runs text-only without it)
+- An [Anthropic API key](https://console.anthropic.com/) (required — powers the Game Master)
+- An [OpenAI API key](https://platform.openai.com/) (optional — powers the narrator voice; app runs text-only without it)
 
 ### Install
 
@@ -100,7 +118,8 @@ Your campaign is saved automatically in a file called `stories.db` — don't del
 curl -sSL https://install.python-poetry.org | python3 -
 export PATH="$HOME/.local/bin:$PATH"
 
-# Install dependencies
+# Clone and install dependencies
+git clone https://github.com/timgushue/rpg_app.git
 cd rpg_app
 poetry install
 
@@ -108,6 +127,15 @@ poetry install
 cp .env.example .env
 # Edit .env and fill in your keys
 ```
+
+### Configure `.env`
+
+```
+ANTHROPIC_API_KEY=your_anthropic_key_here
+OPENAI_API_KEY=your_openai_key_here
+```
+
+The `stories.db` database and `audio/` folder are created automatically on first run. Do not commit them to git.
 
 ### Run
 
@@ -117,23 +145,44 @@ poetry run streamlit run app.py
 
 Your browser will open automatically at `http://localhost:8501`.
 
-### First-run voice setup (ElevenLabs users)
+### Running tests
 
-If you set an ElevenLabs API key and left `ELEVENLABS_VOICE_ID` blank, the app opens on a voice selection screen. Browse voices, click **Preview voice** to hear a sample, then click **Use this voice** to confirm. Your choice is saved to `.env` and the picker won't appear again.
+```bash
+poetry run pytest tests/ -v
+```
 
-To change the narrator voice later, blank out `ELEVENLABS_VOICE_ID=` in `.env` and restart the app.
+---
 
-### Project files
+### Project layout
 
 ```
 rpg_app/
-├── app.py          Streamlit UI and voice picker
-├── engine.py       Claude API calls, story generation, session summarization
-├── database.py     SQLite setup and all DB operations
-├── voice.py        ElevenLabs TTS, voice listing and selection
-├── prompts.py      Pathfinder system prompts, character data, adventure starters
-├── pyproject.toml  Poetry project config
-├── poetry.lock     Locked dependency versions
-├── .env.example    Template for your API keys
-└── stories.db      Auto-created on first run — do not delete
+├── app.py                  Entry point — Streamlit UI
+│
+├── game/                   Pathfinder 2e rules and data
+│   ├── dice.py             Dice rolling, skill detection, degree of success
+│   ├── game_time.py        Golarion calendar and time advancement
+│   ├── character.py        Ability score generation from ancestry + class
+│   └── game_data.py        All PF2e tables: classes, gear, spells, XP, etc.
+│
+├── ai/                     AI API integrations
+│   ├── engine.py           Claude: story generation, DC assessment, resource tracking
+│   ├── voice.py            OpenAI TTS: text-to-speech narration
+│   └── prompts/
+│       ├── narrator.py     GM system prompts (opening, recap, narration)
+│       ├── structured.py   JSON-extraction prompts (resources, world state, summary)
+│       └── context.py      Assembles game state into a Claude prompt
+│
+├── storage/
+│   └── database.py         SQLite: campaigns, sessions, messages
+│
+├── tests/
+│   ├── test_dice.py
+│   ├── test_game_time.py
+│   ├── test_character.py
+│   └── test_game_data.py
+│
+├── pyproject.toml          Poetry project config and dependencies
+├── .env.example            Template for API keys
+└── stories.db              Auto-created — do not delete or commit
 ```

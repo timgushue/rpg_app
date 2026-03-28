@@ -2,7 +2,7 @@
 Character creation helpers — ability score computation from ancestry and class.
 """
 
-from game_data import ANCESTRY_ABILITY_BOOSTS, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
+from .game_data import ANCESTRY_ABILITY_BOOSTS, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
 
 
 def build_ability_scores(ancestry: str, hero_class: str) -> dict:

@@ -3,7 +3,7 @@ import json
 import re
 from typing import Optional
 
-from character import build_ability_scores
+from game.character import build_ability_scores
 
 
 DB_PATH = "stories.db"

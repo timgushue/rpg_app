@@ -2,8 +2,8 @@
 Context builder — assembles current game state into a Claude prompt string.
 """
 
-from game_data import XP_PER_LEVEL
-from game_time import format_time
+from game.game_data import XP_PER_LEVEL
+from game.game_time import format_time
 
 
 def build_context(campaign: dict, summaries: list, messages: list, roll_result: dict = None) -> str:

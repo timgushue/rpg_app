@@ -1,6 +1,6 @@
 import pytest
-from character import build_ability_scores
-from game_data import CLASSES, ANCESTRIES, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
+from game.character import build_ability_scores
+from game.game_data import CLASSES, ANCESTRIES, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
 
 
 # ---------------------------------------------------------------------------

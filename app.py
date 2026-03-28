@@ -7,12 +7,12 @@ import streamlit as st
 
 AUDIO_DIR = os.path.join(os.path.dirname(__file__), "audio")
 
-from database import Database
-from engine import Engine
-from voice import Voice
-from prompts import ANCESTRIES, CLASSES, ADVENTURE_STARTERS, XP_PER_LEVEL
-from dice import format_roll_for_display
-from game_time import format_time
+from storage.database import Database
+from ai.engine import Engine
+from ai.voice import Voice
+from ai.prompts import ANCESTRIES, CLASSES, ADVENTURE_STARTERS, XP_PER_LEVEL
+from game.dice import format_roll_for_display
+from game.game_time import format_time
 
 st.set_page_config(
     page_title="Pathfinder Quest",

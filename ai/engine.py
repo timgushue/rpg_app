@@ -2,10 +2,10 @@ import json
 import os
 import anthropic
 
-from database import Database
-import dice as dice_module
-import game_time
-from prompts import (
+from storage.database import Database
+from game import dice as dice_module
+from game import game_time
+from ai.prompts import (
     NARRATOR_SYSTEM_PROMPT,
     OPENING_SCENE_PROMPT,
     RECAP_SCENE_PROMPT,
@@ -21,7 +21,7 @@ from prompts import (
     XP_PER_LEVEL,
     build_context,
 )
-from character import build_ability_scores
+from game.character import build_ability_scores
 
 MODEL = "claude-sonnet-4-5"
 
@@ -29,7 +29,6 @@ MODEL = "claude-sonnet-4-5"
 def _copy_slots(slot_dict: dict) -> dict:
     """Deep-copy spell slot structure."""
     return {lvl: dict(data) for lvl, data in slot_dict.items()}
-
 
 
 class Engine:
@@ -93,13 +92,9 @@ class Engine:
     def _get_action_dc(self, campaign: dict, messages: list, user_input: str) -> int:
         """Ask Claude to set the appropriate DC for this action given the current scene."""
         hero = campaign["hero_sheet"]
-        world = campaign["world_state"]
 
-        # Build a compact scene summary from the last few messages
         recent = messages[-4:] if len(messages) >= 4 else messages
-        scene_lines = [
-            f"{m['role'].title()}: {m['content']}" for m in recent
-        ]
+        scene_lines = [f"{m['role'].title()}: {m['content']}" for m in recent]
         scene_summary = "\n".join(scene_lines) if scene_lines else "Session just started."
 
         prompt = f"""You are a Pathfinder 2e Game Master setting a Difficulty Class (DC) for an action.
@@ -179,7 +174,6 @@ Reply with a single integer only."""
         hero = campaign["hero_sheet"]
         world = campaign["world_state"]
 
-        # Format inventory for the prompt
         inventory = hero.get("inventory", [])
         if inventory and isinstance(inventory[0], dict):
             inv_str = ", ".join(
@@ -218,59 +212,48 @@ Reply with a single integer only."""
         if not updates:
             return
 
-        # Spell slots
         for lvl_str, count in updates.get("spell_slots_used", {}).items():
             if lvl_str in hero.get("spell_slots", {}):
                 slot = hero["spell_slots"][lvl_str]
                 slot["remaining"] = max(0, slot["remaining"] - int(count))
 
-        # Focus points
         fp_used = updates.get("focus_points_used", 0)
         if fp_used and hero.get("focus_points"):
             hero["focus_points"]["remaining"] = max(
                 0, hero["focus_points"]["remaining"] - int(fp_used)
             )
 
-        # Consumed items
         items_consumed = updates.get("items_consumed", {})
         if items_consumed and inventory and isinstance(inventory[0], dict):
             for item_name, qty in items_consumed.items():
                 for item in inventory:
                     if item["name"].lower() == item_name.lower():
                         item["quantity"] = max(0, item["quantity"] - int(qty))
-            # Remove fully depleted items
             hero["inventory"] = [i for i in inventory if i["quantity"] > 0]
 
-        # Full rest: restore all daily resources
         if updates.get("rested"):
             for slot_data in hero.get("spell_slots", {}).values():
                 slot_data["remaining"] = slot_data["max"]
             if hero.get("focus_points"):
                 hero["focus_points"]["remaining"] = hero["focus_points"]["max"]
-
-        # Short rest: restore focus points only
         elif updates.get("short_rested"):
             if hero.get("focus_points"):
                 hero["focus_points"]["remaining"] = hero["focus_points"]["max"]
 
-        # XP
         xp_gained = int(updates.get("xp_gained", 0))
         if xp_gained > 0:
             hero["xp"] = hero.get("xp", 0) + xp_gained
-            # Level up while XP threshold is met
             while hero["xp"] >= XP_PER_LEVEL:
                 hero["xp"] -= XP_PER_LEVEL
                 hero["level"] = hero.get("level", 1) + 1
                 hp_gain = CLASS_HP_PER_LEVEL.get(hero.get("class", ""), 8)
                 hero["max_hp"] = hero.get("max_hp", 20) + hp_gain
-                hero["hp"] = hero["max_hp"]  # full heal on level up (PF2e rule)
+                hero["hp"] = hero["max_hp"]
 
-        # Gold
         gold_changed = int(updates.get("gold_changed", 0))
         if gold_changed != 0:
             hero["gold"] = max(0, hero.get("gold", 0) + gold_changed)
 
-        # Advance time
         minutes = int(updates.get("minutes_elapsed", 5))
         time_state = world.get("time", game_time.initial_time())
         new_time, _ = game_time.advance_time(time_state, minutes)
@@ -297,7 +280,7 @@ Reply with a single integer only."""
             world = campaign["world_state"]
             for key, value in updates.items():
                 if key == "time":
-                    continue  # time is managed by _try_update_resources
+                    continue
                 if isinstance(value, list) and isinstance(world.get(key), list):
                     for item in value:
                         if item not in world[key]:
@@ -344,7 +327,7 @@ Reply with a single integer only."""
             {"name": name, "quantity": qty}
             for name, qty in CLASS_STARTING_GEAR.get(hero_class, [("adventurer's kit", 1)])
         ]
-        starting_max_hp = CLASS_HP_PER_LEVEL.get(hero_class, 8) + 8  # class HP + average ancestry HP
+        starting_max_hp = CLASS_HP_PER_LEVEL.get(hero_class, 8) + 8
         ability_scores = build_ability_scores(ancestry, hero_class)
         hero_sheet = {
             "ancestry": ancestry,
@@ -373,27 +356,3 @@ Reply with a single integer only."""
             "time": game_time.initial_time(),
         }
         return self.db.create_campaign(title, adventure_setting, hero_name, hero_sheet, world_state)
-
-
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    db = Database()
-    db.init()
-    engine = Engine(db)
-
-    campaign_id = engine.start_campaign(
-        title="Test Quest",
-        adventure_setting="sandpoint",
-        hero_name="Aria",
-        ancestry="Elf",
-        hero_class="Wizard",
-        level=1,
-        traits=["curious", "studious"],
-    )
-    print(f"Created campaign: {campaign_id}")
-    campaign = db.get_campaign(campaign_id)
-    print(f"Spell slots: {campaign['hero_sheet']['spell_slots']}")
-    print(f"Inventory: {campaign['hero_sheet']['inventory']}")
-    print(f"Time: {campaign['world_state']['time']}")

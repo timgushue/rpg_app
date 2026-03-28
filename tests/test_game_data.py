@@ -3,7 +3,7 @@ Data completeness tests — every class and ancestry must have a full set of ent
 in every game data table. These catch typos and missing entries early.
 """
 import pytest
-from game_data import (
+from game.game_data import (
     CLASSES,
     ANCESTRIES,
     CLASS_KEY_ABILITY,

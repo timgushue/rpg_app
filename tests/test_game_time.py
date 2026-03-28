@@ -1,5 +1,5 @@
 import pytest
-from game_time import initial_time, advance_time, format_time, DAYS_OF_WEEK, SEASONS
+from game.game_time import initial_time, advance_time, format_time, DAYS_OF_WEEK, SEASONS
 
 
 # ---------------------------------------------------------------------------

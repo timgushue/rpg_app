@@ -1,6 +1,6 @@
 from unittest.mock import patch
 import pytest
-from dice import detect_skill, get_modifier, roll_action, format_roll_for_display
+from game.dice import detect_skill, get_modifier, roll_action, format_roll_for_display
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def _roll(fixed_roll, hero=None, action="attack the goblin", dc=DC):
             "strength": 10, "dexterity": 10, "constitution": 10,
             "intelligence": 10, "wisdom": 10, "charisma": 10,
         }}
-    with patch("dice.random.randint", return_value=fixed_roll):
+    with patch("game.dice.random.randint", return_value=fixed_roll):
         return roll_action(hero, action, dc=dc)
 
 def test_natural_20_is_critical_success():

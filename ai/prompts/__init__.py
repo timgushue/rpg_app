@@ -1,11 +1,11 @@
 """
-prompts package — re-exports everything so existing `from prompts import X` calls still work.
+prompts package — re-exports everything so existing `from ai.prompts import X` calls work.
 """
 
 from .narrator import NARRATOR_SYSTEM_PROMPT, OPENING_SCENE_PROMPT, RECAP_SCENE_PROMPT
 from .structured import SUMMARY_PROMPT, WORLD_UPDATE_PROMPT, RESOURCE_UPDATE_PROMPT
 from .context import build_context
-from game_data import (
+from game.game_data import (
     ANCESTRIES,
     CLASSES,
     ANCESTRY_ABILITY_BOOSTS,
