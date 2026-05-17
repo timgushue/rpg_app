@@ -37,6 +37,7 @@ class Database:
                     session_id  INTEGER NOT NULL REFERENCES sessions(id),
                     role        TEXT NOT NULL,
                     content     TEXT NOT NULL,
+                    roll_data   TEXT,
                     audio_path  TEXT,
                     timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
@@ -44,6 +45,10 @@ class Database:
             # Migration: add audio_path to existing databases that predate this column
             try:
                 conn.execute("ALTER TABLE messages ADD COLUMN audio_path TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN roll_data TEXT")
             except sqlite3.OperationalError:
                 pass  # column already exists
 
@@ -189,11 +194,11 @@ class Database:
             ).fetchall()
             return [row[0] for row in reversed(rows)]
 
-    def save_message(self, session_id, role, content) -> int:
+    def save_message(self, session_id, role, content, roll_data: Optional[dict] = None) -> int:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.execute(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                (session_id, role, content)
+                "INSERT INTO messages (session_id, role, content, roll_data) VALUES (?, ?, ?, ?)",
+                (session_id, role, content, json.dumps(roll_data) if roll_data is not None else None)
             )
             return cur.lastrowid
 
@@ -208,10 +213,18 @@ class Database:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, role, content, audio_path FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+                "SELECT id, role, content, roll_data, audio_path FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
                 (session_id,)
             ).fetchall()
-            return [dict(row) for row in rows]
+            messages = []
+            for row in rows:
+                message = dict(row)
+                if message.get("roll_data"):
+                    message["roll_data"] = json.loads(message["roll_data"])
+                else:
+                    message["roll_data"] = None
+                messages.append(message)
+            return messages
 
 
 if __name__ == "__main__":

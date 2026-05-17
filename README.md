@@ -119,10 +119,10 @@ cp .env.example .env
 ### Run
 
 ```bash
-poetry run streamlit run app.py
+poetry run python nicegui_app.py
 ```
 
-Opens at `http://localhost:8501`. The database and audio folder are created automatically on first run.
+Opens on a local NiceGUI server. The database and audio folder are created automatically on first run.
 
 ### Tests
 

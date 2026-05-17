@@ -8,7 +8,7 @@ This document describes the project structure, data models, and key flows for de
 
 A Pathfinder 2nd Edition storytelling app for children (ages 8–12). The player types actions; Claude acts as the Game Master and narrates outcomes; OpenAI TTS reads the narration aloud. Campaigns persist across sessions in SQLite. All Pathfinder 2e rules (skill checks, spell slots, inventory, XP, levelling) are enforced automatically.
 
-**Tech stack:** Streamlit · Anthropic Claude (claude-sonnet-4-5) · OpenAI TTS (gpt-4o-mini-tts, fable voice) · SQLite · Poetry
+**Tech stack:** NiceGUI · Anthropic Claude (claude-sonnet-4-5) · OpenAI TTS (gpt-4o-mini-tts, fable voice) · SQLite · Poetry
 
 ---
 
@@ -16,7 +16,8 @@ A Pathfinder 2nd Edition storytelling app for children (ages 8–12). The player
 
 ```
 rpg_app/
-├── app.py                  Streamlit entry point — UI only, no game logic
+├── nicegui_app.py          NiceGUI entry point
+├── app_service.py          Framework-neutral UI workflow service
 │
 ├── game/                   Pathfinder 2e rules and data (no external dependencies)
 │   ├── game_data.py        All PF2e tables: classes, ancestries, gear, spells, XP, gold, HP
@@ -195,7 +196,7 @@ Tests cover `game/` only — pure logic with no API calls or mocking of external
 
 ## Development notes
 
-- `app.py` imports from all three packages (`game`, `ai`, `storage`) — it is the only file that does so
+- `nicegui_app.py` is the UI entry point; `app_service.py` holds framework-neutral UI workflows
 - `ai/engine.py` is the only file that calls both Claude and the database; keep it that way
 - `game/` has no imports from `ai/` or `storage/` — keep it dependency-free
 - `storage/database.py` only imports from `game/character.py` (for migrations)

@@ -151,7 +151,7 @@ Reply with a single integer only."""
         story_beat = response.content[0].text
 
         self.db.save_message(session_id, "user", user_input)
-        assistant_msg_id = self.db.save_message(session_id, "assistant", story_beat)
+        assistant_msg_id = self.db.save_message(session_id, "assistant", story_beat, roll_data=roll_result)
 
         try:
             self._try_update_world_state(campaign_id, story_beat)
