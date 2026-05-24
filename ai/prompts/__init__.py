@@ -3,7 +3,14 @@ prompts package — re-exports everything so existing `from ai.prompts import X`
 """
 
 from .narrator import NARRATOR_SYSTEM_PROMPT, OPENING_SCENE_PROMPT, RECAP_SCENE_PROMPT
-from .structured import SUMMARY_PROMPT, WORLD_UPDATE_PROMPT, RESOURCE_UPDATE_PROMPT
+from .structured import (
+    STORY_ARC_PROMPT,
+    TURN_RESOLUTION_PROMPT,
+    TURN_RESULT_PROMPT,
+    SUMMARY_PROMPT,
+    WORLD_UPDATE_PROMPT,
+    RESOURCE_UPDATE_PROMPT,
+)
 from .context import build_context
 from game.game_data import (
     ANCESTRIES,
@@ -22,6 +29,7 @@ from game.game_data import (
 
 __all__ = [
     "NARRATOR_SYSTEM_PROMPT", "OPENING_SCENE_PROMPT", "RECAP_SCENE_PROMPT",
+    "STORY_ARC_PROMPT", "TURN_RESOLUTION_PROMPT", "TURN_RESULT_PROMPT",
     "SUMMARY_PROMPT", "WORLD_UPDATE_PROMPT", "RESOURCE_UPDATE_PROMPT",
     "build_context",
     "ANCESTRIES", "CLASSES", "ANCESTRY_ABILITY_BOOSTS", "CLASS_KEY_ABILITY",

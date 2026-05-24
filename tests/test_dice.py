@@ -1,6 +1,6 @@
 from unittest.mock import patch
 import pytest
-from game.dice import detect_skill, get_modifier, roll_action, format_roll_for_display
+from game.dice import detect_skill, get_modifier, normalize_skill, roll_action, format_roll_for_display
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +30,18 @@ def test_detect_skill_case_insensitive():
 
 def test_detect_skill_unknown_returns_none():
     assert detect_skill("I stand here and wait") is None
+
+
+def test_normalize_skill_accepts_exact_value():
+    assert normalize_skill("Perception") == "Perception"
+
+
+def test_normalize_skill_accepts_case_insensitive_value():
+    assert normalize_skill("perception") == "Perception"
+
+
+def test_normalize_skill_rejects_unknown_value():
+    assert normalize_skill("Banana") is None
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +131,17 @@ def test_result_contains_expected_keys():
 def test_total_is_roll_plus_modifier():
     result = _roll(12)
     assert result["total"] == result["roll"] + result["modifier"]
+
+
+def test_roll_action_uses_skill_override():
+    hero = {"class": "Fighter", "ability_scores": {
+        "strength": 18, "dexterity": 10, "constitution": 10,
+        "intelligence": 10, "wisdom": 10, "charisma": 10,
+    }}
+    with patch("game.dice.random.randint", return_value=10):
+        result = roll_action(hero, "I inspect the altar.", dc=15, skill_override="Athletics")
+    assert result["skill"] == "Athletics"
+    assert result["modifier"] == 6
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,7 @@ DC_HARD    = 20
 DC_VERY_HARD = 25
 
 PROFICIENCY_BONUS = 2  # trained proficiency at level 1
+VALID_SKILLS = set(SKILL_TO_ABILITY.keys())
 
 
 def _ability_modifier(score: int) -> int:
@@ -100,6 +101,22 @@ def detect_skill(action_text: str) -> Optional[str]:
     return None
 
 
+def normalize_skill(skill: Optional[str]) -> Optional[str]:
+    """Return a validated skill name or None."""
+    if skill is None:
+        return None
+    if skill in VALID_SKILLS:
+        return skill
+    candidate = skill.strip()
+    if candidate in VALID_SKILLS:
+        return candidate
+    lowered = candidate.lower()
+    for valid_skill in VALID_SKILLS:
+        if valid_skill.lower() == lowered:
+            return valid_skill
+    return None
+
+
 def get_modifier(hero_sheet: dict, skill: Optional[str]) -> int:
     """Calculate the total modifier for a skill check given the hero sheet."""
     if skill is None:
@@ -113,12 +130,12 @@ def get_modifier(hero_sheet: dict, skill: Optional[str]) -> int:
     return modifier
 
 
-def roll_action(hero_sheet: dict, action_text: str, dc: int = DC_NORMAL) -> dict:
+def roll_action(hero_sheet: dict, action_text: str, dc: int = DC_NORMAL, skill_override: Optional[str] = None) -> dict:
     """
     Roll a d20 check for the given action and return full result details.
     Returns a dict with: skill, roll, modifier, total, dc, degree.
     """
-    skill = detect_skill(action_text)
+    skill = normalize_skill(skill_override) or detect_skill(action_text)
     modifier = get_modifier(hero_sheet, skill)
     roll = random.randint(1, 20)
     total = roll + modifier

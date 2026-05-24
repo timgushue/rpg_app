@@ -4,12 +4,14 @@ Context builder — assembles current game state into a Claude prompt string.
 
 from game.game_data import XP_PER_LEVEL
 from game.game_time import format_time
+from game.state_update import get_current_act, get_current_beat
 
 
-def build_context(campaign: dict, summaries: list, messages: list, roll_result: dict = None) -> str:
+def build_context(campaign: dict, summaries: list, messages: list, roll_result: dict = None, resolution_data: dict = None) -> str:
     hero_name = campaign["hero_name"]
     hero = campaign["hero_sheet"]
     world = campaign["world_state"]
+    story = campaign.get("story_state", {})
 
     lines = []
 
@@ -82,6 +84,54 @@ def build_context(campaign: dict, summaries: list, messages: list, roll_result: 
         lines.append(f"Lore: {world['lore']}")
 
     lines.append("")
+    lines.append("=== STORY ARC ===")
+    if story:
+        lines.append(f"Arc: {story.get('title', '')}")
+        if story.get("premise"):
+            lines.append(f"Premise: {story['premise']}")
+        if story.get("hero_goal"):
+            lines.append(f"Hero goal: {story['hero_goal']}")
+        if story.get("main_threat"):
+            lines.append(f"Main threat: {story['main_threat']}")
+        current_act = get_current_act(story)
+        current_beat = get_current_beat(story)
+        if current_act:
+            lines.append(f"Current act: {current_act.get('title', '')} — {current_act.get('summary', '')}")
+        if current_beat:
+            lines.append(f"Current beat: {current_beat.get('title', '')}")
+            lines.append(f"Beat goal: {current_beat.get('goal', '')}")
+            lines.append(f"Completion signal: {current_beat.get('completion_signal', '')}")
+        if story.get("last_turn_summary"):
+            lines.append(f"Story momentum: {story['last_turn_summary']}")
+        continuity = story.get("continuity") or {}
+        if continuity:
+            lines.append("")
+            lines.append("=== HIDDEN CONTINUITY GUARDRAILS ===")
+            if continuity.get("current_situation"):
+                lines.append(f"Current situation: {continuity['current_situation']}")
+            if continuity.get("current_location"):
+                lines.append(f"Current location: {continuity['current_location']}")
+            if continuity.get("resolved_threads"):
+                lines.append("Resolved threads that should not be undone:")
+                for thread in continuity["resolved_threads"]:
+                    lines.append(f"- {thread}")
+            if continuity.get("active_constraints"):
+                lines.append("Active continuity constraints:")
+                for constraint in continuity["active_constraints"]:
+                    lines.append(f"- {constraint}")
+            if continuity.get("recent_complications"):
+                lines.append("Recent complications on cooldown:")
+                for complication in continuity["recent_complications"]:
+                    label = complication.get("label", "")
+                    cooldown = complication.get("cooldown", 0)
+                    if label:
+                        lines.append(f"- {label} ({cooldown} turns)")
+            if continuity.get("last_meaningful_change"):
+                lines.append(f"Last meaningful change: {continuity['last_meaningful_change']}")
+    else:
+        lines.append("No story arc loaded.")
+
+    lines.append("")
     lines.append("=== THE STORY SO FAR ===")
     if summaries:
         for i, summary in enumerate(summaries, 1):
@@ -108,5 +158,14 @@ def build_context(campaign: dict, summaries: list, messages: list, roll_result: 
             f"{skill}: rolled {roll_result['roll']} {mod_str} = {roll_result['total']} "
             f"vs DC {roll_result['dc']} — {roll_result['degree'].upper()}"
         )
+
+    if resolution_data:
+        lines.append("")
+        lines.append("=== RESOLVED TURN ===")
+        if resolution_data.get("narration_cue"):
+            lines.append(f"Outcome: {resolution_data['narration_cue']}")
+        next_focus = resolution_data.get("arc_progress", {}).get("next_story_focus", "")
+        if next_focus:
+            lines.append(f"Next story focus: {next_focus}")
 
     return "\n".join(lines)

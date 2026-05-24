@@ -23,3 +23,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# UX design handoff artifacts
+claude_design_initial/
+
+# Runtime logs
+data/

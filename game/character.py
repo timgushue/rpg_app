@@ -4,6 +4,15 @@ Character creation helpers — ability score computation from ancestry and class
 
 from .game_data import ANCESTRY_ABILITY_BOOSTS, CLASS_KEY_ABILITY, CLASS_SECONDARY_ABILITIES
 
+VALID_ABILITIES = {
+    "strength",
+    "dexterity",
+    "constitution",
+    "intelligence",
+    "wisdom",
+    "charisma",
+}
+
 
 def build_ability_scores(ancestry: str, hero_class: str) -> dict:
     """
@@ -24,3 +33,16 @@ def build_ability_scores(ancestry: str, hero_class: str) -> dict:
     for ability, delta in ANCESTRY_ABILITY_BOOSTS.get(ancestry, {}).items():
         scores[ability] = max(4, min(20, scores[ability] + delta))
     return scores
+
+
+def apply_ability_bump(hero_sheet: dict, ability: str, amount: int = 2) -> dict:
+    normalized = ability.strip().lower()
+    if normalized not in VALID_ABILITIES:
+        raise ValueError(f"Unknown ability: {ability}")
+
+    scores = dict(hero_sheet.get("ability_scores", {}))
+    current = int(scores.get(normalized, 10))
+    scores[normalized] = max(4, min(20, current + amount))
+    updated = dict(hero_sheet)
+    updated["ability_scores"] = scores
+    return updated

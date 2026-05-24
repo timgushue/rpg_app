@@ -158,8 +158,77 @@ CLASS_FOCUS_POINTS = {
     "Alchemist":          {"max": 0, "remaining": 0},
 }
 
+CLASS_LEVEL_FEATURES = {
+    "Fighter": {
+        2: "Combat edge sharpened",
+        3: "Battle resilience deepens",
+        4: "Martial technique expands",
+    },
+    "Wizard": {
+        2: "Arcane studies broaden",
+        3: "Spellcraft deepens",
+        4: "Advanced magical discipline",
+    },
+    "Rogue": {
+        2: "Sharper instincts",
+        3: "Deeper underworld tricks",
+        4: "Expert finesse",
+    },
+    "Cleric": {
+        2: "Divine calling strengthens",
+        3: "Faith-fueled miracles deepen",
+        4: "Sacred discipline expands",
+    },
+    "Ranger": {
+        2: "Hunter's discipline grows",
+        3: "Trail wisdom deepens",
+        4: "Wilderness mastery expands",
+    },
+    "Barbarian": {
+        2: "Primal fury intensifies",
+        3: "Survival instincts harden",
+        4: "Savage prowess expands",
+    },
+    "Paladin (Champion)": {
+        2: "Sacred conviction strengthens",
+        3: "Knightly resolve deepens",
+        4: "Champion's calling expands",
+    },
+    "Druid": {
+        2: "Bond with nature deepens",
+        3: "Primal insight expands",
+        4: "Druidic tradition broadens",
+    },
+    "Bard": {
+        2: "Performance magic improves",
+        3: "Stories gain deeper power",
+        4: "Artful mastery expands",
+    },
+    "Monk": {
+        2: "Inner discipline sharpens",
+        3: "Body and spirit align",
+        4: "Martial form expands",
+    },
+    "Sorcerer": {
+        2: "Bloodline power intensifies",
+        3: "Innate magic deepens",
+        4: "Arcane instinct expands",
+    },
+    "Alchemist": {
+        2: "Experimental craft improves",
+        3: "Formula expertise deepens",
+        4: "Alchemical mastery expands",
+    },
+}
+
 # Golarion adventure settings
 ADVENTURE_STARTERS = {
+    "fresh_story": (
+        "Create a brand-new Pathfinder adventure somewhere in Golarion. Choose a vivid child-friendly "
+        "location, an immediate mystery or problem, and a clear heroic objective. Do not reuse the "
+        "Sandpoint Swallowtail Festival, goblin raid, stolen Starstone Key, Stolen Lands charter, or "
+        "newly discovered Osirion tomb openings. Start with a different inciting incident."
+    ),
     "sandpoint": (
         "The sleepy coastal town of Sandpoint is celebrating its annual Swallowtail Festival "
         "when a horn blast cuts through the festivities — goblins are pouring in from the woods, "

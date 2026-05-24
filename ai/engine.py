@@ -1,34 +1,69 @@
 import json
 import os
+import re
+import uuid
+
 import anthropic
 
-from storage.database import Database
-from game import dice as dice_module
-from game import game_time
 from ai.prompts import (
-    NARRATOR_SYSTEM_PROMPT,
-    OPENING_SCENE_PROMPT,
-    RECAP_SCENE_PROMPT,
-    SUMMARY_PROMPT,
-    WORLD_UPDATE_PROMPT,
-    RESOURCE_UPDATE_PROMPT,
     ADVENTURE_STARTERS,
-    CLASS_STARTING_GEAR,
-    CLASS_STARTING_GOLD,
-    CLASS_SPELL_SLOTS,
     CLASS_FOCUS_POINTS,
     CLASS_HP_PER_LEVEL,
-    XP_PER_LEVEL,
+    CLASS_SPELL_SLOTS,
+    CLASS_STARTING_GEAR,
+    CLASS_STARTING_GOLD,
+    OPENING_SCENE_PROMPT,
+    RECAP_SCENE_PROMPT,
+    STORY_ARC_PROMPT,
+    SUMMARY_PROMPT,
+    NARRATOR_SYSTEM_PROMPT,
+    TURN_RESOLUTION_PROMPT,
     build_context,
 )
+from game import dice as dice_module
 from game.character import build_ability_scores
+from game.game_time import initial_time
+from game.state_update import (
+    apply_turn_resolution,
+    build_fallback_story_state,
+    get_current_beat,
+    normalize_story_state,
+    summarize_story_state,
+)
+from storage.database import Database
 
 MODEL = "claude-sonnet-4-5"
+CLASSIFIER_MODEL = "claude-3-5-haiku-latest"
+MAX_SCENE_TITLE_WORDS = 6
 
 
 def _copy_slots(slot_dict: dict) -> dict:
-    """Deep-copy spell slot structure."""
     return {lvl: dict(data) for lvl, data in slot_dict.items()}
+
+
+def _safe_json_loads(raw_text: str) -> dict:
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("No JSON object found")
+    return json.loads(raw_text[start : end + 1])
+
+
+def _fallback_scene_title(text: str) -> str:
+    cleaned = " ".join((text or "").replace("\n", " ").split())
+    if not cleaned:
+        return "A New Scene"
+    first_clause = re.split(r"[.!?;:—-]", cleaned, maxsplit=1)[0].strip()
+    words = first_clause.split()[:MAX_SCENE_TITLE_WORDS]
+    return " ".join(words).strip(" ,") or "A New Scene"
+
+
+def _scene_title_from_resolution(resolution_data: dict, fallback_text: str) -> str:
+    title = str(resolution_data.get("scene_title") or "").strip()
+    if title:
+        words = title.split()[:MAX_SCENE_TITLE_WORDS]
+        return " ".join(words).strip(" ,")
+    return _fallback_scene_title(fallback_text)
 
 
 class Engine:
@@ -36,34 +71,57 @@ class Engine:
         self.db = db
         self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-    # ------------------------------------------------------------------
-    # Opening scene
-    # ------------------------------------------------------------------
-
-    def generate_opening_scene(self, campaign_id: int, session_id: int, is_new: bool) -> str:
+    def ensure_campaign_story_state(self, campaign_id: int) -> dict:
         campaign = self.db.get_campaign(campaign_id)
+        if campaign is None:
+            return None
+        if campaign.get("story_state"):
+            return campaign
+
+        story_state = self._generate_story_arc(
+            campaign["hero_name"],
+            campaign["hero_sheet"],
+            campaign["world_state"],
+        )
+        world_state = dict(campaign["world_state"])
+        if story_state.get("hero_goal") and story_state["hero_goal"] not in world_state.get("quests", []):
+            world_state.setdefault("quests", []).append(story_state["hero_goal"])
+            self.db.update_world_state(campaign_id, world_state)
+        self.db.update_story_state(campaign_id, story_state)
+        campaign["world_state"] = world_state
+        campaign["story_state"] = story_state
+        return campaign
+
+    def generate_opening_scene(self, campaign_id: int, session_id: int, is_new: bool) -> tuple[str, int]:
+        campaign = self.ensure_campaign_story_state(campaign_id)
         summaries = self.db.get_recent_summaries(campaign_id, n=5)
         hero = campaign["hero_sheet"]
         world = campaign["world_state"]
+        story = normalize_story_state(campaign.get("story_state"))
+        current_beat = get_current_beat(story)
 
         if is_new:
             system = OPENING_SCENE_PROMPT
             prompt = (
                 f"Hero: {campaign['hero_name']}, a level {hero.get('level', 1)} "
                 f"{hero.get('ancestry', '')} {hero.get('class', '')}\n"
-                f"Personality: {', '.join(hero.get('traits', []))}\n\n"
+                f"Personality: {', '.join(hero.get('traits', []))}\n"
+                f"Story arc: {story.get('title', '')}\n"
+                f"Hero goal: {story.get('hero_goal', '')}\n"
+                f"Current beat: {current_beat.get('goal', '') if current_beat else ''}\n\n"
                 f"Adventure setting:\n{world.get('setting', '')}"
             )
         else:
             system = RECAP_SCENE_PROMPT
             recap_lines = [
                 f"Hero: {campaign['hero_name']}, a level {hero.get('level', 1)} "
-                f"{hero.get('ancestry', '')} {hero.get('class', '')}"
+                f"{hero.get('ancestry', '')} {hero.get('class', '')}",
+                f"Current story arc: {summarize_story_state(story)}",
             ]
             if summaries:
                 recap_lines.append("\nChapter summaries (oldest to most recent):")
-                for i, s in enumerate(summaries, 1):
-                    recap_lines.append(f"  Chapter {i}: {s}")
+                for i, summary in enumerate(summaries, 1):
+                    recap_lines.append(f"  Chapter {i}: {summary}")
             else:
                 recap_lines.append("\nNo previous sessions recorded yet.")
             recap_lines.append(f"\nCurrent world state:\n{world.get('setting', '')}")
@@ -85,21 +143,19 @@ class Engine:
         msg_id = self.db.save_message(session_id, "assistant", scene)
         return scene, msg_id
 
-    # ------------------------------------------------------------------
-    # DC assessment
-    # ------------------------------------------------------------------
-
     def _get_action_dc(self, campaign: dict, messages: list, user_input: str) -> int:
-        """Ask Claude to set the appropriate DC for this action given the current scene."""
         hero = campaign["hero_sheet"]
-
+        story = normalize_story_state(campaign.get("story_state"))
+        current_beat = get_current_beat(story)
         recent = messages[-4:] if len(messages) >= 4 else messages
-        scene_lines = [f"{m['role'].title()}: {m['content']}" for m in recent]
+        scene_lines = [f"{message['role'].title()}: {message['content']}" for message in recent]
         scene_summary = "\n".join(scene_lines) if scene_lines else "Session just started."
 
         prompt = f"""You are a Pathfinder 2e Game Master setting a Difficulty Class (DC) for an action.
 
 Hero: {campaign['hero_name']}, Level {hero.get('level', 1)} {hero.get('ancestry', '')} {hero.get('class', '')}
+Story arc: {story.get('title', '')}
+Current beat goal: {current_beat.get('goal', '') if current_beat else ''}
 Current scene:
 {scene_summary}
 
@@ -113,191 +169,108 @@ What DC should this action require? Use Pathfinder 2e guidelines:
 - Very Hard: 24-26
 - Extreme: 28+
 
-Consider the specific situation — a rusty lock is easier than a vault, a startled goblin is easier to intimidate than a veteran soldier.
-If the action is purely descriptive and requires no roll (walking, talking casually, picking something up), reply with 0.
-
+If the action is purely descriptive and requires no roll, reply with 0.
 Reply with a single integer only."""
 
         try:
             response = self.client.messages.create(
-                model=MODEL,
+                model=CLASSIFIER_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=10,
             )
             return int(response.content[0].text.strip())
         except Exception:
-            return 15  # safe fallback
+            return 15
 
-    # ------------------------------------------------------------------
-    # Story beat
-    # ------------------------------------------------------------------
+    def _classify_action_skill(self, campaign: dict, messages: list, user_input: str) -> str | None:
+        hero = campaign["hero_sheet"]
+        recent = messages[-4:] if len(messages) >= 4 else messages
+        scene_lines = [f"{message['role'].title()}: {message['content']}" for message in recent]
+        scene_summary = "\n".join(scene_lines) if scene_lines else "Session just started."
+        prompt = f"""Classify this Pathfinder 2e action into exactly one skill or combat action.
 
-    def generate_story_beat(self, campaign_id: int, session_id: int, user_input: str) -> tuple:
-        campaign = self.db.get_campaign(campaign_id)
+Return JSON only in this shape:
+{{"skill": "Athletics"}}
+
+Allowed skills:
+Acrobatics, Arcana, Athletics, Crafting, Deception, Diplomacy, Intimidation, Medicine, Nature, Occultism, Performance, Perception, Religion, Society, Stealth, Survival, Thievery, Attack
+
+Rules:
+- Choose Attack for weapon strikes, unarmed strikes, spell attacks, or obvious offensive combat actions.
+- Choose the single best matching skill for exploration, social, knowledge, stealth, or utility actions.
+- If no listed skill fits clearly, return {{"skill": null}}.
+
+Hero: {campaign['hero_name']} the level {hero.get('level', 1)} {hero.get('ancestry', '')} {hero.get('class', '')}
+Current scene:
+{scene_summary}
+
+Player action:
+{user_input}
+"""
+
+        try:
+            response = self.client.messages.create(
+                model=CLASSIFIER_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=80,
+            )
+            raw = _safe_json_loads(response.content[0].text.strip())
+            skill = dice_module.normalize_skill(raw.get("skill"))
+            return skill or dice_module.detect_skill(user_input)
+        except Exception:
+            return dice_module.detect_skill(user_input)
+
+    def generate_story_beat(self, campaign_id: int, session_id: int, user_input: str) -> dict:
+        campaign = self.ensure_campaign_story_state(campaign_id)
         summaries = self.db.get_recent_summaries(campaign_id, n=5)
         messages = self.db.get_session_messages(session_id)
 
         dc = self._get_action_dc(campaign, messages, user_input)
-        roll_result = dice_module.roll_action(campaign["hero_sheet"], user_input, dc=dc)
-        context = build_context(campaign, summaries, messages, roll_result=roll_result)
-        full_prompt = f"{context}\n\nHero: {user_input}"
+        classified_skill = self._classify_action_skill(campaign, messages, user_input)
+        roll_result = self._roll_action(campaign["hero_sheet"], user_input, dc, classified_skill)
+        base_context = build_context(campaign, summaries, messages, roll_result=roll_result)
+        resolution_data = self._resolve_turn(base_context, user_input, roll_result)
+        updated_campaign, applied_delta = apply_turn_resolution(campaign, resolution_data)
 
-        response = self.client.messages.create(
-            model=MODEL,
-            system=NARRATOR_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": full_prompt}],
-            max_tokens=500,
-        )
-        story_beat = response.content[0].text
+        if applied_delta.get("need_new_arc"):
+            updated_campaign = self._refresh_story_arc(updated_campaign, applied_delta.get("replacement_reason", ""))
+            applied_delta["arc_status"] = updated_campaign["story_state"]["status"]
+            applied_delta["current_act_id"] = updated_campaign["story_state"]["current_act_id"]
+            applied_delta["current_beat_id"] = updated_campaign["story_state"]["current_beat_id"]
+
+        self.db.update_hero_sheet(campaign_id, updated_campaign["hero_sheet"])
+        self.db.update_world_state(campaign_id, updated_campaign["world_state"])
+        self.db.update_story_state(campaign_id, updated_campaign["story_state"])
+
+        narration_context = build_context(updated_campaign, summaries, messages, roll_result=roll_result)
+        story_beat = self._narrate_turn(narration_context, user_input, roll_result, resolution_data)
+        scene_title = _scene_title_from_resolution(resolution_data, story_beat)
 
         self.db.save_message(session_id, "user", user_input)
-        assistant_msg_id = self.db.save_message(session_id, "assistant", story_beat, roll_data=roll_result)
-
-        try:
-            self._try_update_world_state(campaign_id, story_beat)
-        except Exception:
-            pass
-
-        try:
-            self._try_update_resources(campaign_id, user_input, story_beat)
-        except Exception:
-            pass
-
-        return story_beat, roll_result, assistant_msg_id
-
-    # ------------------------------------------------------------------
-    # Resource tracking
-    # ------------------------------------------------------------------
-
-    def _try_update_resources(self, campaign_id: int, player_action: str, story_beat: str) -> None:
-        campaign = self.db.get_campaign(campaign_id)
-        hero = campaign["hero_sheet"]
-        world = campaign["world_state"]
-
-        inventory = hero.get("inventory", [])
-        if inventory and isinstance(inventory[0], dict):
-            inv_str = ", ".join(
-                f"{i['name']} x{i['quantity']}" if i['quantity'] != 1 else i['name']
-                for i in inventory
-            )
-        else:
-            inv_str = ", ".join(inventory)
-
-        spell_slots = hero.get("spell_slots", {})
-        slots_str = ", ".join(
-            f"Level {lvl}: {d['remaining']}/{d['max']}" for lvl, d in spell_slots.items()
-        ) or "none"
-
-        fp = hero.get("focus_points", {})
-        fp_str = f"{fp.get('remaining', 0)}/{fp.get('max', 0)}" if fp.get("max", 0) > 0 else "none"
-
-        prompt = RESOURCE_UPDATE_PROMPT.format(
-            hero_name=campaign["hero_name"],
-            hero_class=hero.get("class", ""),
-            spell_slots=slots_str,
-            focus_points=fp_str,
-            inventory=inv_str,
-            player_action=player_action,
-            story_beat=story_beat,
+        assistant_msg_id = self.db.save_message(
+            session_id,
+            "assistant",
+            story_beat,
+            roll_data=roll_result,
+            resolution_data=resolution_data,
+            applied_delta=applied_delta,
+            scene_title=scene_title,
         )
 
-        response = self.client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-        )
-        raw = response.content[0].text.strip()
-        updates = json.loads(raw)
-
-        if not updates:
-            return
-
-        for lvl_str, count in updates.get("spell_slots_used", {}).items():
-            if lvl_str in hero.get("spell_slots", {}):
-                slot = hero["spell_slots"][lvl_str]
-                slot["remaining"] = max(0, slot["remaining"] - int(count))
-
-        fp_used = updates.get("focus_points_used", 0)
-        if fp_used and hero.get("focus_points"):
-            hero["focus_points"]["remaining"] = max(
-                0, hero["focus_points"]["remaining"] - int(fp_used)
-            )
-
-        items_consumed = updates.get("items_consumed", {})
-        if items_consumed and inventory and isinstance(inventory[0], dict):
-            for item_name, qty in items_consumed.items():
-                for item in inventory:
-                    if item["name"].lower() == item_name.lower():
-                        item["quantity"] = max(0, item["quantity"] - int(qty))
-            hero["inventory"] = [i for i in inventory if i["quantity"] > 0]
-
-        if updates.get("rested"):
-            for slot_data in hero.get("spell_slots", {}).values():
-                slot_data["remaining"] = slot_data["max"]
-            if hero.get("focus_points"):
-                hero["focus_points"]["remaining"] = hero["focus_points"]["max"]
-        elif updates.get("short_rested"):
-            if hero.get("focus_points"):
-                hero["focus_points"]["remaining"] = hero["focus_points"]["max"]
-
-        xp_gained = int(updates.get("xp_gained", 0))
-        if xp_gained > 0:
-            hero["xp"] = hero.get("xp", 0) + xp_gained
-            while hero["xp"] >= XP_PER_LEVEL:
-                hero["xp"] -= XP_PER_LEVEL
-                hero["level"] = hero.get("level", 1) + 1
-                hp_gain = CLASS_HP_PER_LEVEL.get(hero.get("class", ""), 8)
-                hero["max_hp"] = hero.get("max_hp", 20) + hp_gain
-                hero["hp"] = hero["max_hp"]
-
-        gold_changed = int(updates.get("gold_changed", 0))
-        if gold_changed != 0:
-            hero["gold"] = max(0, hero.get("gold", 0) + gold_changed)
-
-        minutes = int(updates.get("minutes_elapsed", 5))
-        time_state = world.get("time", game_time.initial_time())
-        new_time, _ = game_time.advance_time(time_state, minutes)
-        world["time"] = new_time
-
-        self.db.update_hero_sheet(campaign_id, hero)
-        self.db.update_world_state(campaign_id, world)
-
-    # ------------------------------------------------------------------
-    # World state
-    # ------------------------------------------------------------------
-
-    def _try_update_world_state(self, campaign_id: int, story_beat: str) -> None:
-        prompt = WORLD_UPDATE_PROMPT.format(story_beat=story_beat)
-        response = self.client.messages.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-        )
-        raw = response.content[0].text.strip()
-        updates = json.loads(raw)
-        if updates:
-            campaign = self.db.get_campaign(campaign_id)
-            world = campaign["world_state"]
-            for key, value in updates.items():
-                if key == "time":
-                    continue
-                if isinstance(value, list) and isinstance(world.get(key), list):
-                    for item in value:
-                        if item not in world[key]:
-                            world[key].append(item)
-                else:
-                    world[key] = value
-            self.db.update_world_state(campaign_id, world)
-
-    # ------------------------------------------------------------------
-    # Session summary
-    # ------------------------------------------------------------------
+        return {
+            "story_beat": story_beat,
+            "roll_result": roll_result,
+            "message_id": assistant_msg_id,
+            "resolution_data": resolution_data,
+            "applied_delta": applied_delta,
+            "scene_title": scene_title,
+        }
 
     def summarize_session(self, campaign_id: int, session_id: int) -> str:
         messages = self.db.get_session_messages(session_id)
         formatted = "\n".join(
-            f"{'Hero' if m['role'] == 'user' else 'Narrator'}: {m['content']}"
-            for m in messages
+            f"{'Hero' if message['role'] == 'user' else 'Narrator'}: {message['content']}"
+            for message in messages
         )
         prompt = SUMMARY_PROMPT.format(messages=formatted)
         response = self.client.messages.create(
@@ -309,10 +282,6 @@ Reply with a single integer only."""
         self.db.save_session_summary(session_id, summary)
         return summary
 
-    # ------------------------------------------------------------------
-    # Campaign creation
-    # ------------------------------------------------------------------
-
     def start_campaign(
         self,
         title: str,
@@ -322,7 +291,34 @@ Reply with a single integer only."""
         hero_class: str,
         level: int,
         traits: list,
+        story_state: dict | None = None,
     ) -> int:
+        hero_sheet = self._build_initial_hero_sheet(ancestry, hero_class, level, traits)
+        world_state = self._build_initial_world_state(adventure_setting)
+        story_state = normalize_story_state(story_state) if story_state else self._generate_story_arc(hero_name, hero_sheet, world_state)
+        if story_state.get("hero_goal"):
+            world_state["quests"].append(story_state["hero_goal"])
+        return self.db.create_campaign(title, adventure_setting, hero_name, hero_sheet, world_state, story_state=story_state)
+
+    def generate_story_arc_draft(
+        self,
+        adventure_setting: str,
+        hero_name: str,
+        ancestry: str,
+        hero_class: str,
+        level: int,
+        traits: list,
+    ) -> dict:
+        hero_sheet = self._build_initial_hero_sheet(ancestry, hero_class, level, traits)
+        world_state = self._build_initial_world_state(adventure_setting)
+        variation_hint = (
+            "Create a fresh alternate story arc for this setting and hero. "
+            "Avoid reusing the most obvious/default premise, inciting incident, clue chain, and final location. "
+            f"Variation seed: {uuid.uuid4().hex[:10]}."
+        )
+        return self._generate_story_arc(hero_name or "The hero", hero_sheet, world_state, variation_hint=variation_hint)
+
+    def _build_initial_hero_sheet(self, ancestry: str, hero_class: str, level: int, traits: list) -> dict:
         inventory = [
             {"name": name, "quantity": qty}
             for name, qty in CLASS_STARTING_GEAR.get(hero_class, [("adventurer's kit", 1)])
@@ -347,12 +343,222 @@ Reply with a single integer only."""
             "inventory": inventory,
             "traits": traits,
         }
-        world_state = {
+        return hero_sheet
+
+    def create_campaign_shell(
+        self,
+        title: str,
+        adventure_setting: str,
+        hero_name: str,
+        ancestry: str,
+        hero_class: str,
+        level: int,
+        traits: list,
+        story_state: dict | None = None,
+    ) -> int:
+        hero_sheet = self._build_initial_hero_sheet(ancestry, hero_class, level, traits)
+        world_state = self._build_initial_world_state(adventure_setting)
+        normalized_story = normalize_story_state(story_state) if story_state else None
+        if normalized_story and normalized_story.get("hero_goal"):
+            world_state["quests"].append(normalized_story["hero_goal"])
+        return self.db.create_campaign(
+            title,
+            adventure_setting,
+            hero_name,
+            hero_sheet,
+            world_state,
+            story_state=normalized_story,
+        )
+
+    def _build_initial_world_state(self, adventure_setting: str) -> dict:
+        return {
             "setting": ADVENTURE_STARTERS.get(adventure_setting, ""),
             "npcs": [],
             "locations": [],
             "quests": [],
             "lore": "",
-            "time": game_time.initial_time(),
+            "time": initial_time(),
         }
-        return self.db.create_campaign(title, adventure_setting, hero_name, hero_sheet, world_state)
+
+    def _generate_story_arc(
+        self,
+        hero_name: str,
+        hero_sheet: dict,
+        world_state: dict,
+        previous_story_state: dict | None = None,
+        replacement_reason: str = "",
+        variation_hint: str = "",
+    ) -> dict:
+        hero_summary = (
+            f"{hero_name}, level {hero_sheet.get('level', 1)} "
+            f"{hero_sheet.get('ancestry', '')} {hero_sheet.get('class', '')}"
+        )
+        previous_arc = summarize_story_state(previous_story_state) if previous_story_state else "None"
+        prompt = STORY_ARC_PROMPT.format(
+            hero=hero_summary,
+            setting=world_state.get("setting", ""),
+            replacement_reason=replacement_reason or "None",
+            previous_arc=previous_arc,
+            variation_hint=variation_hint or "Use the campaign context naturally.",
+        )
+        try:
+            response = self.client.messages.create(
+                model=MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1200,
+            )
+            raw_story = _safe_json_loads(response.content[0].text.strip())
+            raw_story["status"] = "active"
+            raw_story["arc_history"] = list(previous_story_state.get("arc_history", [])) if previous_story_state else []
+            if previous_story_state:
+                raw_story["arc_history"].append(
+                    {
+                        "title": previous_story_state.get("title", "Unknown Arc"),
+                        "reason": replacement_reason or "The previous arc ended.",
+                    }
+                )
+                previous_id = previous_story_state.get("arc_id", "arc-0").replace("arc-", "")
+                raw_story["arc_id"] = f"arc-{int(previous_id) + 1}"
+            else:
+                raw_story["arc_id"] = "arc-1"
+            raw_story["last_turn_summary"] = replacement_reason or raw_story.get("premise", "")
+            return normalize_story_state(raw_story)
+        except Exception:
+            return build_fallback_story_state(hero_name, world_state, previous_story_state, replacement_reason)
+
+    def _refresh_story_arc(self, campaign: dict, replacement_reason: str) -> dict:
+        hero = campaign["hero_sheet"]
+        if hero.get("hp", 0) <= 0:
+            hero["hp"] = hero.get("max_hp", 1)
+        story_state = self._generate_story_arc(
+            campaign["hero_name"],
+            hero,
+            campaign["world_state"],
+            previous_story_state=campaign.get("story_state"),
+            replacement_reason=replacement_reason or "The story needed a new direction.",
+        )
+        world = campaign["world_state"]
+        if story_state.get("hero_goal") and story_state["hero_goal"] not in world.get("quests", []):
+            world.setdefault("quests", []).append(story_state["hero_goal"])
+        return {
+            **campaign,
+            "hero_sheet": hero,
+            "world_state": world,
+            "story_state": story_state,
+        }
+
+    def _resolve_turn(self, context: str, user_input: str, roll_result: dict) -> dict:
+        prompt = TURN_RESOLUTION_PROMPT.format(
+            context=context,
+            player_action=user_input,
+            roll_result=json.dumps(roll_result),
+        )
+        try:
+            response = self.client.messages.create(
+                model=MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=900,
+            )
+            resolution_data = _safe_json_loads(response.content[0].text.strip())
+            resolution_data.setdefault("scene_title", "")
+            resolution_data.setdefault("narration_cue", "")
+            resolution_data.setdefault("advancement_type", "none")
+            resolution_data.setdefault("state_delta", {})
+            resolution_data.setdefault("world_updates", {})
+            resolution_data.setdefault("arc_progress", {})
+            resolution_data.setdefault("continuity_update", {})
+            return resolution_data
+        except Exception:
+            return {
+                "scene_title": "A Small Change",
+                "narration_cue": "The hero changes the scene, but only in a small and uncertain way.",
+                "advancement_type": "none",
+                "state_delta": {
+                    "hp_change": 0,
+                    "xp_change": 10 if roll_result.get("degree") in {"success", "critical success"} else 0,
+                    "gold_change": 0,
+                    "inventory_add": [],
+                    "inventory_remove": [],
+                    "spell_slots_used": {},
+                    "focus_points_used": 0,
+                    "minutes_elapsed": 10 if roll_result.get("dc", 0) else 5,
+                    "full_rest": False,
+                    "short_rest": False,
+                },
+                "world_updates": {},
+                "arc_progress": {
+                    "beat_status": "progress" if roll_result.get("degree") in {"success", "critical success"} else "stalled",
+                    "arc_status": "active",
+                    "next_story_focus": "Keep pushing toward the current story objective.",
+                    "replacement_reason": "",
+                },
+                "continuity_update": {
+                    "last_meaningful_change": "The situation changes only slightly.",
+                },
+            }
+
+    def _narrate_turn(self, context: str, user_input: str, roll_result: dict, resolution_data: dict) -> str:
+        prompt = (
+            f"{context}\n\n"
+            f"Player action:\n{user_input}\n\n"
+            f"Dice result:\n{json.dumps(roll_result)}\n\n"
+            f"Resolved state changes:\n{json.dumps(resolution_data)}\n\n"
+            "Narrate this one turn for the player. Follow the dice result exactly. "
+            "Use the resolved state changes and hidden continuity guardrails only as GM guidance. "
+            "Do not expose JSON, state keys, cooldowns, continuity rules, or story-arc planning."
+        )
+        try:
+            response = self.client.messages.create(
+                model=MODEL,
+                system=NARRATOR_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=650,
+            )
+            story_beat = response.content[0].text.strip()
+            return story_beat or resolution_data.get("narration_cue") or "The scene changes, but only a little."
+        except Exception:
+            resolution_data = self._fallback_resolution(roll_result)
+            return resolution_data["narration_cue"]
+
+    def _fallback_resolution(self, roll_result: dict) -> dict:
+        return {
+            "scene_title": "A Small Change",
+            "narration_cue": "The hero changes the scene, but only in a small and uncertain way.",
+            "advancement_type": "none",
+            "state_delta": {
+                "hp_change": 0,
+                "xp_change": 10 if roll_result.get("degree") in {"success", "critical success"} else 0,
+                "gold_change": 0,
+                "inventory_add": [],
+                "inventory_remove": [],
+                "spell_slots_used": {},
+                "focus_points_used": 0,
+                "minutes_elapsed": 10 if roll_result.get("dc", 0) else 5,
+                "full_rest": False,
+                "short_rest": False,
+            },
+            "world_updates": {},
+            "arc_progress": {
+                "beat_status": "progress" if roll_result.get("degree") in {"success", "critical success"} else "stalled",
+                "arc_status": "active",
+                "next_story_focus": "Keep pushing toward the current story objective.",
+                "replacement_reason": "",
+            },
+            "continuity_update": {
+                "last_meaningful_change": "The situation changes only slightly.",
+            },
+        }
+
+    def _roll_action(self, hero_sheet: dict, user_input: str, dc: int, skill_override: str | None = None) -> dict:
+        if dc == 0:
+            skill = dice_module.normalize_skill(skill_override) or dice_module.detect_skill(user_input)
+            modifier = dice_module.get_modifier(hero_sheet, skill)
+            return {
+                "skill": skill,
+                "roll": 0,
+                "modifier": modifier,
+                "total": modifier,
+                "dc": 0,
+                "degree": "success",
+            }
+        return dice_module.roll_action(hero_sheet, user_input, dc=dc, skill_override=skill_override)
